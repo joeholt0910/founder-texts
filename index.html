@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Text request</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --text: #1c1c1e;
+    --muted: #6e6e73;
+    --bubble: #e9e9eb;
+    --bubble-text: #1c1c1e;
+    --line: #d1d1d6;
+    --blue: #0a7cff;
+    --green: #1f9d55;
+    --on-accent: #ffffff;
+    --warn-bg: #fff4e5;
+    --warn-text: #8a4b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #000000;
+      --text: #f2f2f7;
+      --muted: #98989f;
+      --bubble: #26262a;
+      --bubble-text: #f2f2f7;
+      --line: #3a3a3c;
+      --blue: #0a84ff;
+      --green: #30a46c;
+      --warn-bg: #3a2a12;
+      --warn-text: #ffc875;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 28px 18px 40px; }
+  h1 { font-size: 28px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .who { color: var(--muted); font-size: 15px; margin: 0 0 20px; }
+  .who span { display: block; }
+  .flag { background: var(--warn-bg); color: var(--warn-text); border-radius: 12px; padding: 10px 12px; font-size: 15px; margin: 0 0 18px; }
+  .bubble {
+    background: var(--bubble); color: var(--bubble-text);
+    border-radius: 20px 20px 20px 6px;
+    padding: 12px 15px; margin: 0 0 22px;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .btn {
+    display: block; width: 100%; text-align: center; text-decoration: none;
+    font: inherit; font-weight: 600; padding: 14px; margin: 0 0 10px;
+    border-radius: 14px; border: 1px solid var(--line);
+    background: transparent; color: var(--text); cursor: pointer;
+  }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: var(--on-accent); }
+  .btn.done { background: var(--green); border-color: var(--green); color: var(--on-accent); }
+  .btn.quiet { border-color: transparent; color: var(--muted); }
+  .btn:disabled { opacity: .55; }
+  .btn:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 22px 0 10px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main id="app"><p class="muted">Loading the text…</p></main>
+
+<script>
+  // Paste your Apps Script web app URL here (the one ending in /exec).
+  const API_URL = 'PASTE_YOUR_EXEC_URL_HERE';
+
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id') || '';
+  const t = params.get('t') || '';
+  const app = document.getElementById('app');
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // credentials: 'omit' is the whole point: no Google cookies, so no multi-account error.
+  async function call(action) {
+    const q = new URLSearchParams({ format: 'json', id, t });
+    if (action) q.set('action', action);
+    const res = await fetch(API_URL + '?' + q.toString(), {
+      credentials: 'omit', redirect: 'follow', cache: 'no-store',
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function smsHref(mobile, draft) {
+    const sep = /Android/i.test(navigator.userAgent) ? '?' : '&';
+    return 'sms:' + mobile + sep + 'body=' + encodeURIComponent(draft);
+  }
+
+  function show(title, html) {
+    document.title = title;
+    app.innerHTML = '<h1>' + esc(title) + '</h1>' + html;
+  }
+
+  function render(d) {
+    switch (d.state) {
+      case 'not_found':
+        return show('Link not found', '<p>This link is no longer valid. Ask the rep to resend the request.</p>');
+      case 'on_hold':
+        return show('On hold', "<p>This text mentions an offer that hasn't been approved yet. The rep has been told.</p>");
+      case 'bad_number':
+        return show('Check the number', '<p>The mobile number for ' + esc(d.name) + " doesn't look right. Ask " + esc(d.requestedBy) + ' to fix it in the sheet.</p>');
+      case 'sent':
+        return show('Marked as sent', '<p>' + esc(d.owner) + ' will follow up.</p>');
+      case 'skipped':
+        return show('Skipped', '<p>Got it. The rep has been told.</p>');
+      case 'open':
+        return renderOpen(d);
+      default:
+        return showError();
+    }
+  }
+
+  function renderOpen(d) {
+    const who = '<p class="who">' +
+      '<span>' + esc(d.role) + (d.role && d.venue ? ' at ' : '') + esc(d.venue) + '</span>' +
+      '<span>Met before: ' + esc(d.met || '?') + '. Requested by ' + esc(d.requestedBy) + '.</span>' +
+      '<span>Follow-up: ' + esc(d.owner) + '</span></p>';
+    const flag = d.flags ? '<p class="flag">' + esc(d.flags) + '</p>' : '';
+    const wa = 'https://wa.me/' + String(d.mobile).replace('+', '') + '?text=' + encodeURIComponent(d.draft);
+
+    show('Text ' + d.name,
+      who + flag +
+      '<div class="bubble">' + esc(d.draft) + '</div>' +
+      '<a class="btn primary" href="' + esc(smsHref(d.mobile, d.draft)) + '">Open in Messages</a>' +
+      '<a class="btn" href="' + esc(wa) + '">Open in WhatsApp</a>' +
+      '<button class="btn" id="copy" type="button">Copy text</button>' +
+      '<p class="hint">Edit the text if you like, send it, then come back and tap:</p>' +
+      '<button class="btn done" id="sent" type="button">I sent it ✓</button>' +
+      '<button class="btn quiet" id="skip" type="button">Skip / not me</button>');
+
+    document.getElementById('copy').onclick = async (e) => {
+      try { await navigator.clipboard.writeText(d.draft); e.target.textContent = 'Copied'; }
+      catch (_) { e.target.textContent = 'Copy failed. Press and hold the text instead.'; }
+    };
+    document.getElementById('sent').onclick = () => act('sent');
+    document.getElementById('skip').onclick = () => act('skip');
+  }
+
+  async function act(action) {
+    app.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    try { render(await call(action)); }
+    catch (_) {
+      app.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      alert("That didn't go through. Check your connection and tap again.");
+    }
+  }
+
+  function showError() {
+    show("Couldn't load the text", '<p>Check your connection and try again.</p><button class="btn primary" id="retry" type="button">Try again</button>');
+    document.getElementById('retry').onclick = load;
+  }
+
+  async function load() {
+    app.innerHTML = '<p class="muted">Loading the text…</p>';
+    if (!id || !t) return render({ state: 'not_found' });
+    try { render(await call()); } catch (_) { showError(); }
+  }
+
+  load();
+</script>
+</body>
+</html>
